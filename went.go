@@ -8,10 +8,12 @@ import (
 	"net"
 	//	"os"
 	"errors"
+	"strconv"
 	"strings"
 )
 
 import "gopkg.in/readline.v1"
+import "github.com/mgutz/ansi"
 
 type irc struct {
 	src  string
@@ -24,7 +26,7 @@ var nick string
 
 func set_window(win string, rl *readline.Instance) {
 	window = win
-	rl.SetPrompt("[" + window + "] ")
+	rl.SetPrompt("[" + colorize(window) + "] ")
 }
 
 func privmsg(msg []string) (out string, err error) {
@@ -106,6 +108,8 @@ func proc_input(conn net.Conn, rl *readline.Instance) {
 			case "/n", "/nick":
 				msg[0] = "NICK"
 				set_nick(msg, rl)
+				// Why does this need a newline but the other commands don't?
+				out = strings.Join(msg, " ")
 			case "/w", "/cur", "/win", "/window":
 				if len(msg) < 2 {
 					err = errors.New("/window <channel/user>")
@@ -135,9 +139,18 @@ func proc_input(conn net.Conn, rl *readline.Instance) {
 		if err != nil {
 			fmt.Fprintln(rl.Stdout(), err)
 		} else {
-			fmt.Fprint(conn, out)
+			// Is there a reason not to add a newline?
+			fmt.Fprintln(conn, out)
 		}
 	}
+}
+
+func colorize(nick string) string {
+	var hash int
+	for _, c := range nick {
+		hash += int(c)
+	}
+	return ansi.Color(nick, strconv.Itoa(hash % 256) + "+b")
 }
 
 func get_src(msg string) (string, string) {
@@ -150,7 +163,7 @@ func get_src(msg string) (string, string) {
 			src = msg[:i]
 		}
 	}
-	return src, msg
+	return colorize(src), msg
 }
 
 func parse_msg(msg string) (strut irc) {
@@ -236,7 +249,7 @@ func main() {
 		&readline.Config{
 			UniqueEditLine:  false,
 			InterruptPrompt: "^C",
-			Prompt:          "[" + nick + "] ",
+			Prompt:          "[" + colorize(nick) + "] ",
 		})
 	if err != nil {
 		panic(err)
