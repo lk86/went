@@ -35,36 +35,36 @@ var nick string
 var colors color_T
 
 
-func auto_helper(c string, auto bool) func(string) string {
-	if auto && len(c) == 0 {
-		return colorize
+// Color functions/setup
+func rand_colors(str string) string {
+	var hash uint64
+	for _, c := range str {
+		hash += uint64(c)
 	}
-	return ansi.ColorFunc(c)
+	return ansi.Color(str, strconv.FormatUint(hash % 256, 10) + "")
+}
+func auto_colors(col string, auto bool) func(string) string {
+	if auto && len(col) == 0 {
+		return rand_colors
+	}
+	return ansi.ColorFunc(col)
 }
 func make_colors(self string, nicks string, chans string, errors string, auto bool) (strut color_T) {
 	strut = color_T {
-		self: auto_helper(self, auto),
-		nicks: auto_helper(nicks, auto),
-		chans: auto_helper(chans, auto),
-		errors: auto_helper(errors, auto),
+		self: auto_colors(self, auto),
+		nicks: auto_colors(nicks, auto),
+		chans: auto_colors(chans, auto),
+		errors: auto_colors(errors, auto),
 	}
 	return
 }
 
-func colorize(nick string) string {
-	var hash uint64
-	for _, c := range nick {
-		hash += uint64(c)
-	}
-	return ansi.Color(nick, strconv.FormatUint(hash % 256, 10) + "")
-}
-
+// Display Helpers
 func set_window(win string, colors color_T, rl *readline.Instance) {
 	window = win
 	rl.SetPrompt(fmt.Sprintf("[%s.%s] ", colors.self(nick), colors.chans(win)))
-
+	fmt.Fprintf(rl.Stdout(), "-WENT- Window focus changed to %s\n", colors.chans(win))
 }
-
 func show_msg(dest string, body string, colors color_T) string {
 	if dest == window {
 		return fmt.Sprintf("< %s> %s", colors.self(nick), body)
@@ -72,6 +72,7 @@ func show_msg(dest string, body string, colors color_T) string {
 	return fmt.Sprintf("[%s] < %s> %s", colors.chans(dest), colors.self(nick), body)
 }
 
+// IRC Message Functions
 func privmsg(msg []string) (out string, err error) {
 	if len(msg) < 3 {
 		err = errors.New("Usage: /msg <channel/user> <message>")
@@ -80,7 +81,6 @@ func privmsg(msg []string) (out string, err error) {
 	out = fmt.Sprintf("PRIVMSG %s :%s", msg[1], msg[2])
 	return
 }
-
 func std_cmd(msg []string, cmd string, usage string, n int) (out string, err error) {
 	if len(msg) < n {
 		err = errors.New("Usage: " + usage)
@@ -90,7 +90,6 @@ func std_cmd(msg []string, cmd string, usage string, n int) (out string, err err
 	out = strings.Join(msg, " ")
 	return
 }
-
 func chan_cmd(msg []string, cmd string, usage string) (out string, err error) {
 	if len(msg) < 2 && window[0] == '#' {
 		msg = append(msg, window)
@@ -204,6 +203,7 @@ func parse_msg(msg string, nick_color func(string) string) (strut irc) {
 		strut.src, msg = get_src(msg[1:], nick_color)
 	}
 	for i, c := range msg {
+		msg = strings.Trim(msg, " ")
 		if c == ':' {
 			strut.cmd = strings.Trim(msg[:i], " :")
 			strut.body = strings.Trim(msg[i:], " :")
@@ -216,6 +216,9 @@ func parse_msg(msg string, nick_color func(string) string) (strut irc) {
 			}
 			break
 		}
+		t := strings.SplitN(msg, " ", 2)
+		strut.cmd = strings.Trim(t[0], " :")
+		strut.body = strings.Trim(t[1], " :")
 	}
 	return
 }
@@ -238,7 +241,7 @@ func proc_conn(conn net.Conn, colors color_T, out io.Writer) {
 		}
 		strut := parse_msg(msg, colors.nicks)
 		splcmd := strings.SplitN(strut.cmd, " ", 3)
-		switch splcmd[0] {
+		switch strings.Trim(splcmd[0], " :") {
 		case "PING":
 			fmt.Fprint(conn, "PONG :", strut.body)
 		case "PRIVMSG", "NOTICE":
@@ -253,50 +256,58 @@ func proc_conn(conn net.Conn, colors color_T, out io.Writer) {
 				fmt.Fprintf(out, "%s< %s> %s",
 					target, strut.src, strut.body)
 			}
+		case "ERROR":
+			fmt.Fprintf(out, "-%s- %s %s",
+				colors.errors("ERROR"), strut.src, strut.body)
 		case "JOIN":
 			fmt.Fprintf(out, "-%s- %s has joined %s",
-				colors.errors("JOIN"), strut.src, strut.body)
-		case "MODE":
+				"JOIN", strut.src, strut.body)
+		case "PART":
+			fmt.Fprintf(out, "-%s- %s has left %s",
+				"PART", strut.src, strut.body)
+		case "MODE", "324":
 			fmt.Fprintf(out, "-%s- %s %s",
-				colors.errors("MODE"), splcmd[1], strut.body)
-		case "001", "002", "003", "004",
-			"251", "255", "265", "266",
-			"332", "353":
-			fmt.Fprintf(out, "%s %s", strut.src, strut.body)
-		//case "005", "252", "254", "309", "366", "375", "376":
-			// Ignore these, not useful/too hard to parse
+				"MODE", splcmd[1], strut.body)
 		default:
-			// This internal case statement parses server reply messages
-			// ignores ones that the client cannot trigger
-			// and marks the rest appropriately
-			reply, _ := strconv.Atoi(splcmd[0])
+			reply, err := strconv.Atoi(splcmd[0])
 			switch {
-			case reply >= 400 || reply == 5:
+			case (reply > 250 && reply < 267) || (reply > 0 && reply < 5) || (reply > 370 && reply < 377):
+				t := strings.SplitN(msg, " ", 4)
+				strut.body = t[len(t) - 1]
+				fmt.Fprintf(out, "-%s- %s", "INFO", strut.body)
+			case reply > 399:
 				fmt.Fprintf(out, "-%s- %s %s", colors.errors("ERROR"), strut.src, strut.body)
-			case reply > 199 && reply < 220:
+			case (reply > 364 && reply < 369) || reply == 353:
+				fmt.Fprintf(out, "-%s- %s", "NAMES", strut.body)
+			case (reply > 301 && reply < 320) || (reply > 351 && reply < 356) ||reply == 330 || reply == 360:
+				fmt.Fprintf(out, "-%s- %s: %s", "WHO", splcmd[2], strut.body)
+			case (reply > 330 && reply < 334):
+				t := strings.SplitN(msg, " ", 4)
+				strut.body = t[len(t) - 1]
+				fmt.Fprintf(out, "-%s- %s", "TOPIC", strut.body)
+			case (reply > 199 && reply < 220) || reply == 5:
 				// Ignore, stats and trace messages
-			case reply > 301 && reply < 320 || reply == 330 || reply == 369 || reply == 352:
-				fmt.Fprintf(out, "-%s- %s %s", colors.errors("WHO"), splcmd[2], strut.body)
+			case err != nil:
+				fmt.Fprintf(out, " Unknown message type: %s", msg)
+				fmt.Fprintf(out, " ??? %s | %s | %s | %s", err, strut.src, strut.cmd, strut.body)
 			default:
-				if len(strut.body) > 0 && strut.body[0] == '-' {
-					fmt.Fprintf(out, "%s %s", strut.src, strut.body)
-				} else {
-					fmt.Fprintf(out, "%s %s %s", strut.src, strut.cmd, strut.body)
-				}
+				fmt.Fprintf(out, "%s %s %s", strut.src, strut.cmd, strut.body)
 			}
 		}
 	}
 }
 
 func main() {
-	host, port, self, nicks, chans, errors, auto :=
-					"", "", "", "", "", "", false
+	host, port, self, nicks, chans, errors, hist, auto :=
+					"", "", "", "", "", "", "", false
 	flag.StringVar(&host, "s", "irc.foonetic.net",
 		"Hostname of the irc server.")
 	flag.StringVar(&nick, "n", "lhk-go",
 		"Your nick/user/full name.")
 	flag.StringVar(&port, "p", "6667",
 		"Port of the irc server.")
+	flag.StringVar(&hist, "histfile", ".went_history",
+		"Path to persistent history file.")
 	flag.StringVar(&self, "self-color", "cyan+b",
 		"Color of own nick.")
 	flag.StringVar(&nicks, "nick-color", "",
@@ -322,6 +333,7 @@ func main() {
 		&readline.Config{
 			UniqueEditLine:  true,
 			InterruptPrompt: "^C",
+			HistoryFile: hist,
 			Prompt:          fmt.Sprintf("[%s.%s] ", colors.self(nick), colors.chans(nick)),
 		})
 	if err != nil {
