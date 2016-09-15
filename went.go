@@ -31,9 +31,9 @@ type config_T struct {
 	msgFmt    string
 	destFmt   string
 	actionFmt string
-	errFmt	string
+	errFmt    string
 	verbose   bool
-	out	io.Writer
+	out       io.Writer
 }
 
 var Nick string
@@ -69,8 +69,8 @@ func MakeConfig(
 		msgFmt:    config[5],
 		destFmt:   config[6],
 		actionFmt: config[7],
-		errFmt:	config[8],
-		out:		stdout,
+		errFmt:    config[8],
+		out:       stdout,
 		verbose:   verbose,
 	}
 	return
@@ -230,40 +230,37 @@ func procInput(serv net.Conn, conf config_T, rl *readline.Instance) {
 	}
 }
 
-// Overly simplistic irc parsing functions
-func findSrc(msg string, nickColor func(string) string) (string, string) {
-	src := "-!- "
+// New and Improved irc parsing functions
+func findSrc(msg string, conf config_T) (string, string) {
+	src := "-!-"
+Loop:
 	for i, c := range msg {
-		if c == ' ' {
+		switch c {
+		case ' ':
 			msg = msg[i:]
-			break
-		} else if c == '!' {
+			break Loop
+		case '!':
 			src = msg[:i]
 		}
 	}
-	return nickColor(src), msg
+	return conf.users(src), msg
 }
-func makeStrut(msg string, nickColor func(string) string) (strut irc_T) {
+func makeStrut(msg string, conf config_T) (strut irc_T) {
 	if msg[0] == ':' { // Message has a source
-		strut.src, msg = findSrc(msg[1:], nickColor)
+		strut.src, msg = findSrc(msg[1:], conf)
 	}
-	for i, c := range msg {
-		msg = strings.Trim(msg, " ")
-		if c == ':' {
-			strut.cmd = strings.Trim(msg[:i], " :")
-			strut.body = strings.Trim(msg[i:], " :")
-			if strut.body[0] == '\001' && strut.body[len(strut.body)-3] == '\001' {
-				split := strings.SplitN(strut.body, " ", 2)
-				if split[0] == "\001ACTION" {
-					strut.is_action = true
-					strut.body = split[1]
-				}
-			}
-			break
+	msg = strings.Trim(msg, " ")
+	i := strings.IndexRune(msg, ':')
+	if i == -1 {
+		i = strings.IndexRune(msg, ' ')
+	}
+	strut.cmd = strings.Trim(msg[:i], " :")
+	strut.body = strings.Trim(msg[i:], " :\r\n") + "\r\n"
+	if strut.body[len(strut.body)-1] == '\001' {
+		if i = strings.Index(msg, "\001ACTION "); i != -1 {
+			strut.is_action = true
+			strut.body = strings.Trim(msg[i+7:], " :\001") + "\r\n"
 		}
-		t := strings.SplitN(msg, " ", 2)
-		strut.cmd = strings.Trim(t[0], " :")
-		strut.body = strings.Trim(t[1], " :")
 	}
 	return
 }
@@ -280,7 +277,7 @@ func procServer(serv net.Conn, conf config_T) {
 			}
 			return
 		}
-		strut := makeStrut(msg, conf.users)
+		strut := makeStrut(msg, conf)
 		cmdSlice := strings.SplitN(strut.cmd, " ", 3)
 		switch cmdSlice[0] {
 		case "PING":
