@@ -14,7 +14,7 @@ import (
 import "github.com/chzyer/readline"
 import "github.com/mgutz/ansi"
 
-type config_T struct {
+type configT struct {
 	self      func(string) string
 	users     func(string) string
 	chans     func(string) string
@@ -28,30 +28,29 @@ type config_T struct {
 	out       io.Writer
 }
 
-type irc_T struct {
-	src       string
-	dest      string
-	cmd       string
-	body      string
-	is_action bool
-	conf      *config_T
+type ircT struct {
+	src      string
+	dest     string
+	cmd      string
+	body     string
+	isAction bool
+	conf     *configT
 }
 
-var Nick string
-var Window string
+var nick string
+var window string
 
-func (s irc_T) String() string {
+func (s ircT) String() string {
 	target := ""
-	if s.conf.verbose || s.dest != Window || (s.dest == Nick && s.src != Window) {
+	if s.conf.verbose || s.dest != window || (s.dest == nick && s.src != window) {
 		target = fmt.Sprintf(s.conf.destFmt, s.conf.chans(s.dest))
 	}
-	if s.is_action {
+	if s.isAction {
 		return fmt.Sprintf(s.conf.actionFmt,
 			target, s.src, s.body)
-	} else {
-		return fmt.Sprintf(s.conf.msgFmt,
-			target, s.src, s.body)
 	}
+	return fmt.Sprintf(s.conf.msgFmt,
+		target, s.src, s.body)
 }
 
 // Color functions/setup
@@ -68,14 +67,14 @@ func autoColor(col string, auto bool) func(string) string {
 	}
 	return ansi.ColorFunc(col)
 }
-func MakeConfig(
+func makeConfig(
 	config [9]string,
 	auto bool,
 	verbose bool,
 	stdout io.Writer,
-) (strut config_T) {
+) (strut configT) {
 
-	strut = config_T{
+	strut = configT{
 		self:      autoColor(config[0], auto),
 		users:     autoColor(config[1], auto),
 		chans:     autoColor(config[2], auto),
@@ -92,18 +91,18 @@ func MakeConfig(
 }
 
 // Global variable setters
-func setWin(win string, conf config_T, rl *readline.Instance) {
-	Window = win
-	rl.SetPrompt(fmt.Sprintf(conf.promptFmt, conf.self(Nick), conf.chans(win)))
+func setWin(win string, conf configT, rl *readline.Instance) {
+	window = win
+	rl.SetPrompt(fmt.Sprintf(conf.promptFmt, conf.self(nick), conf.chans(win)))
 	dispErr(conf, "WENT", "Window focus changed to", conf.chans(win)+"\n")
 }
-func setNick(newNick string, conf config_T, rl *readline.Instance) {
-	if Window == Nick {
-		Nick = newNick
-		setWin(Nick, conf, rl)
+func setNick(newNick string, conf configT, rl *readline.Instance) {
+	if window == nick {
+		nick = newNick
+		setWin(nick, conf, rl)
 	} else {
-		Nick = newNick
-		setWin(Window, conf, rl)
+		nick = newNick
+		setWin(window, conf, rl)
 	}
 }
 
@@ -126,21 +125,21 @@ func sendCmd(msg []string, cmd string, usage string, n int) (out string, err err
 	return
 }
 func sendToChan(msg []string, cmd string, usage string) (out string, err error) {
-	if len(msg) < 2 && Window[0] == '#' {
-		msg = append(msg, Window)
+	if len(msg) < 2 && window[0] == '#' {
+		msg = append(msg, window)
 	}
 	return sendCmd(msg, cmd, usage, 2)
 }
 
-func dispMsg(strut irc_T) {
+func dispMsg(strut ircT) {
 	fmt.Fprintf(strut.conf.out, "%v", strut)
 }
 
-func dispErr(conf config_T, code string, target string, body string) {
+func dispErr(conf configT, code string, target string, body string) {
 	fmt.Fprintf(conf.out, conf.errFmt, conf.errors(code), target, body)
 }
 
-func procInput(serv net.Conn, conf config_T, rl *readline.Instance) {
+func procInput(serv net.Conn, conf configT, rl *readline.Instance) {
 	for {
 		line, err := rl.Readline()
 		if err != nil {
@@ -159,14 +158,14 @@ func procInput(serv net.Conn, conf config_T, rl *readline.Instance) {
 				out, err = sendPM(msg)
 				if err == nil {
 					setWin(msg[1], conf, rl)
-					dispMsg(irc_T{conf.self(Nick), msg[1], "", msg[2] + "\n", false, &conf})
+					dispMsg(ircT{conf.self(nick), msg[1], "", msg[2] + "\n", false, &conf})
 				}
 			case "/me", "/action":
 				if len(msg) < 2 {
 					err = errors.New("/me <message>")
 				} else {
-					dispMsg(irc_T{conf.self(Nick), Window, "", msg[1] + "\n", true, &conf})
-					out = fmt.Sprintf("PRIVMSG %s :\001ACTION %s \001", Window, msg[1])
+					dispMsg(ircT{conf.self(nick), window, "", msg[1] + "\n", true, &conf})
+					out = fmt.Sprintf("PRIVMSG %s :\001ACTION %s \001", window, msg[1])
 				}
 			case "/who":
 				out, err = sendToChan(msg, "WHO", "/who <channel>")
@@ -182,7 +181,7 @@ func procInput(serv net.Conn, conf config_T, rl *readline.Instance) {
 			case "/p", "/part":
 				out, err = sendToChan(msg, "PART", "/part [<channels>]")
 				if err == nil {
-					setWin(Nick, conf, rl)
+					setWin(nick, conf, rl)
 				}
 			case "/topic":
 				out, err = sendToChan(msg, "TOPIC", "/topic [<channel>] [<new toipic>]")
@@ -211,11 +210,11 @@ func procInput(serv net.Conn, conf config_T, rl *readline.Instance) {
 			}
 		} else { // Line does not start with /
 			if line != "" {
-				if Window != Nick {
-					msg = []string{"PRIVMSG", Window, line}
+				if window != nick {
+					msg = []string{"PRIVMSG", window, line}
 					out, err = sendPM(msg)
 					if err == nil {
-						dispMsg(irc_T{conf.self(Nick), Window, "", line + "\n", false, &conf})
+						dispMsg(ircT{conf.self(nick), window, "", line + "\n", false, &conf})
 					}
 				} else {
 					err = errors.New("Error: Use /w to set current window")
@@ -231,7 +230,7 @@ func procInput(serv net.Conn, conf config_T, rl *readline.Instance) {
 }
 
 // New and Improved irc parsing functions
-func findSrc(msg string, conf config_T) (string, string) {
+func findSrc(msg string, conf configT) (string, string) {
 	src := "-!-"
 Loop:
 	for i, c := range msg {
@@ -245,7 +244,7 @@ Loop:
 	}
 	return conf.users(src), msg
 }
-func makeStrut(msg string, conf config_T) (strut irc_T) {
+func makeStrut(msg string, conf configT) (strut ircT) {
 	if msg[0] == ':' { // Message has a source
 		strut.src, msg = findSrc(msg[1:], conf)
 	}
@@ -258,7 +257,7 @@ func makeStrut(msg string, conf config_T) (strut irc_T) {
 	strut.body = strings.Trim(msg[i:], " :\r\n") + "\n"
 	if strut.body[len(strut.body)-1] == '\001' {
 		if i = strings.Index(msg, "\001ACTION "); i != -1 {
-			strut.is_action = true
+			strut.isAction = true
 			strut.body = strings.Trim(msg[i+7:], " :\001") + "\n"
 		}
 	}
@@ -266,10 +265,10 @@ func makeStrut(msg string, conf config_T) (strut irc_T) {
 	return
 }
 
-func procServer(serv net.Conn, conf config_T) {
+func procServer(serv net.Conn, conf configT) {
 	servReader := *bufio.NewReader(serv)
-	fmt.Fprintln(serv, "NICK ", Nick)
-	fmt.Fprintf(serv, "USER %s 8 * : %s \n", Nick, Nick)
+	fmt.Fprintln(serv, "NICK ", nick)
+	fmt.Fprintf(serv, "USER %s 8 * : %s \n", nick, nick)
 	for {
 		msg, err := servReader.ReadString('\n')
 		if err != nil {
@@ -330,7 +329,7 @@ func main() {
 	host, port, history, auto, verbose := "", "", "", false, false
 	flag.StringVar(&host, "s", "irc.foonetic.net",
 		"Hostname of the irc server.")
-	flag.StringVar(&Nick, "n", "lhk-go",
+	flag.StringVar(&nick, "n", "lhk-go",
 		"Your nick/user/full name.")
 	flag.StringVar(&port, "p", "6667",
 		"Port of the irc server.")
@@ -378,9 +377,9 @@ func main() {
 	}
 	defer rl.Close()
 
-	conf := MakeConfig(config, auto, verbose, rl.Stdout())
-	Window = Nick
-	rl.SetPrompt(fmt.Sprintf(conf.promptFmt, conf.self(Nick), conf.chans(Nick)))
+	conf := makeConfig(config, auto, verbose, rl.Stdout())
+	window = nick
+	rl.SetPrompt(fmt.Sprintf(conf.promptFmt, conf.self(nick), conf.chans(nick)))
 
 	go procInput(serv, conf, rl)
 	procServer(serv, conf)
